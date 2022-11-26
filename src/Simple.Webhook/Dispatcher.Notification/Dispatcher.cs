@@ -1,8 +1,19 @@
 using Confluent.Kafka;
+using Dispatcher.Notification.Repositories.Interfaces;
+using Dispatcher.Notification.Resilience;
 using Microsoft.Extensions.Options;
+using Microsoft.Win32;
+using Newtonsoft.Json;
+using Polly;
+using Polly.CircuitBreaker;
+using Polly.Registry;
+using Polly.Wrap;
 using Simple.Webhook.Shared;
 using Simple.Webhook.Shared.Infra.Kafka;
+using System.Net.Http;
+using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Dispatcher.Notification
 {
@@ -11,11 +22,19 @@ namespace Dispatcher.Notification
         private readonly ILogger<Dispatcher> _logger;
         private readonly IConsumer<string, string> _consumer;
         private readonly KafkaConfiguration _kafkaConfiguration;
-        public Dispatcher(ILogger<Dispatcher> logger, IConsumer<string, string> consumer, IOptions<KafkaConfiguration> options)
+        private IWebhookConfigurationRepository _webhookConfigurationRepository;
+        private readonly IAsyncPolicy<HttpResponseMessage> _defaultPolicy;
+        private readonly IPolicyRegistry<string> _policies;
+        public Dispatcher(ILogger<Dispatcher> logger, IConsumer<string, string> consumer, 
+            IOptions<KafkaConfiguration> options, IWebhookConfigurationRepository webhookConfigurationRepository,
+            IPolicyRegistry<string> policies)
         {
             _logger = logger;
             _consumer = consumer;
             _kafkaConfiguration = options.Value;
+            _webhookConfigurationRepository = webhookConfigurationRepository;
+            _defaultPolicy = policies.Get<IAsyncPolicy<HttpResponseMessage>>("default");
+            _policies = policies;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -30,7 +49,41 @@ namespace Dispatcher.Notification
                     if (result is null)
                         continue;
 
-                    var eventNotification = JsonSerializer.Deserialize<Event<object>>(result.Message.Value);
+                    var eventNotification = JsonConvert.DeserializeObject<Event<object>>(result.Message.Value);
+                    if (eventNotification is not null)
+                    {
+                        var configurations = await _webhookConfigurationRepository.GetWebhookConfigurationsAsync(eventNotification.Name.ToString());
+                        if (configurations != null && configurations.Any())
+                        {
+                            foreach (var configuration in configurations)
+                            {
+                                var httpClient = new HttpClient();
+                                if (!_policies.ContainsKey(configuration.Uri))
+                                {
+                                    _policies.Add(configuration.Id.ToString(), Policies.CreatePolicy());
+                                }
+                                var _circuitBreaker = _policies[configuration.Id.ToString()] as AsyncCircuitBreakerPolicy;
+
+                                var context = new Context();
+                                context.Add("kafkaConfiguration", _kafkaConfiguration);
+                                try
+                                {
+                                    var resultado = await _circuitBreaker.ExecuteAsync((context) =>
+                                    {
+                                        var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, configuration.Uri);
+                                        httpRequestMessage.Content = JsonContent.Create(eventNotification);
+                                        return httpClient.SendAsync(httpRequestMessage);
+                                    }, context);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError($"# {DateTime.Now:HH:mm:ss} # " +
+                                    $"Circuito = {_circuitBreaker.CircuitState} | " +
+                                    $"Falha ao invocar a API: {ex.GetType().FullName} | {ex.Message}");
+                                }
+                            }
+                        }
+                    }
                 }
             }
             catch (Exception ex)
