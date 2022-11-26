@@ -25,7 +25,7 @@ namespace Dispatcher.Notification
         private IWebhookConfigurationRepository _webhookConfigurationRepository;
         private readonly IAsyncPolicy<HttpResponseMessage> _defaultPolicy;
         private readonly IPolicyRegistry<string> _policies;
-        public Dispatcher(ILogger<Dispatcher> logger, IConsumer<string, string> consumer, 
+        public Dispatcher(ILogger<Dispatcher> logger, IConsumer<string, string> consumer,
             IOptions<KafkaConfiguration> options, IWebhookConfigurationRepository webhookConfigurationRepository,
             IPolicyRegistry<string> policies)
         {
@@ -36,7 +36,44 @@ namespace Dispatcher.Notification
             _defaultPolicy = policies.Get<IAsyncPolicy<HttpResponseMessage>>("default");
             _policies = policies;
         }
+        public async Task DispatchEvent(Event<object> eventNotification)
+        {
+            if (eventNotification is not null)
+            {
+                var configurations = await _webhookConfigurationRepository.GetWebhookConfigurationsAsync(eventNotification.Name.ToString());
+                if (configurations != null && configurations.Any())
+                {
+                    foreach (var configuration in configurations)
+                    {
+                        var httpClient = new HttpClient();
+                        if (!_policies.ContainsKey(configuration.Id.ToString()))
+                        {
+                            _policies.Add(configuration.Id.ToString(), Policies.CreatePolicy());
+                        }
+                        var _circuitBreaker = _policies[configuration.Id.ToString()] as AsyncCircuitBreakerPolicy;
 
+                        var context = new Context();
+                        try
+                        {
+                            var resultado = await _circuitBreaker.ExecuteAsync((context) =>
+                            {
+                                var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, configuration.Uri);
+                                httpRequestMessage.Content = JsonContent.Create(eventNotification);
+                                return httpClient.SendAsync(httpRequestMessage);
+                            }, context);
+                            _logger.LogInformation($"* {DateTime.Now:HH:mm:ss} * " +
+                            $"Circuito = {_circuitBreaker.CircuitState}");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError($"# {DateTime.Now:HH:mm:ss} # " +
+                            $"Circuito = {_circuitBreaker.CircuitState} | " +
+                            $"Falha ao invocar a API: {ex.GetType().FullName} | {ex.Message}");
+                        }
+                    }
+                }
+            }
+        }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             try
@@ -50,40 +87,8 @@ namespace Dispatcher.Notification
                         continue;
 
                     var eventNotification = JsonConvert.DeserializeObject<Event<object>>(result.Message.Value);
-                    if (eventNotification is not null)
-                    {
-                        var configurations = await _webhookConfigurationRepository.GetWebhookConfigurationsAsync(eventNotification.Name.ToString());
-                        if (configurations != null && configurations.Any())
-                        {
-                            foreach (var configuration in configurations)
-                            {
-                                var httpClient = new HttpClient();
-                                if (!_policies.ContainsKey(configuration.Uri))
-                                {
-                                    _policies.Add(configuration.Id.ToString(), Policies.CreatePolicy());
-                                }
-                                var _circuitBreaker = _policies[configuration.Id.ToString()] as AsyncCircuitBreakerPolicy;
 
-                                var context = new Context();
-                                context.Add("kafkaConfiguration", _kafkaConfiguration);
-                                try
-                                {
-                                    var resultado = await _circuitBreaker.ExecuteAsync((context) =>
-                                    {
-                                        var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, configuration.Uri);
-                                        httpRequestMessage.Content = JsonContent.Create(eventNotification);
-                                        return httpClient.SendAsync(httpRequestMessage);
-                                    }, context);
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError($"# {DateTime.Now:HH:mm:ss} # " +
-                                    $"Circuito = {_circuitBreaker.CircuitState} | " +
-                                    $"Falha ao invocar a API: {ex.GetType().FullName} | {ex.Message}");
-                                }
-                            }
-                        }
-                    }
+                    _ = DispatchEvent(eventNotification);
                 }
             }
             catch (Exception ex)
