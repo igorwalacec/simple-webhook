@@ -20,4 +20,17 @@ public static class KafkaExtensions
 
         return services;
     }
+    public static IServiceCollection AddKafkaProducer(this IServiceCollection services, IConfiguration configuration)
+    {
+        var kafkaConfiguration = new KafkaConfiguration();
+        configuration.Bind("KafkaConfiguration", kafkaConfiguration);
+        var config = new ProducerConfig
+        {
+            BootstrapServers = kafkaConfiguration.BootstrapServer
+        };
+
+        services.AddSingleton<IProducer<string, string>>(_ => new ProducerBuilder<string, string>(config).Build());
+
+        return services;
+    }
 }
