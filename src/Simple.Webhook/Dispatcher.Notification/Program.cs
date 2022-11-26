@@ -1,10 +1,14 @@
+using Dispatcher.Notification;
+using Dispatcher.Notification.DTOs;
 using WorkerService1;
 
 IHost host = Host.CreateDefaultBuilder(args)
-    .ConfigureServices(services =>
+    .ConfigureServices((context, services) =>
     {
+        services.AddOptions<KafkaConfiguration>().BindConfiguration("KafkaConfiguration");
+        services.AddAsyncInitializer<TopicInitializer>();
         services.AddHostedService<Worker>();
     })
     .Build();
-
-host.Run();
+await host.InitAsync();
+await host.RunAsync();
