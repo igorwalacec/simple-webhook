@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Configuration;
+using Simple.Webhook.Shared;
 using System.Text.Json;
 using Webhook.Api.Repositories.Interfaces;
 

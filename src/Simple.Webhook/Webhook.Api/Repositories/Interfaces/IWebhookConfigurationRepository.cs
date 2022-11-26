@@ -1,4 +1,6 @@
-﻿namespace Webhook.Api.Repositories.Interfaces;
+﻿using Simple.Webhook.Shared;
+
+namespace Webhook.Api.Repositories.Interfaces;
 public interface IWebhookConfigurationRepository
 {
     Task<WebhookConfiguration?> GetWebhookConfigurationAsync(Guid id);

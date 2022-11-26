@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using Simple.Webhook.Shared;
+using Simple.Webhook.Shared.Infra.Redis;
 using Webhook.Api.DTOs;
 using Webhook.Api.Repositories;
 using Webhook.Api.Repositories.Interfaces;
@@ -7,13 +9,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddStackExchangeRedisCache(options =>
-{
-    options.Configuration = builder.Configuration.GetConnectionString("Redis");
-    options.InstanceName = "SimpleWebhook_";
-});
+builder.Services.AddRedis(builder.Configuration);
 
-//Repositories
 builder.Services.AddSingleton<IWebhookConfigurationRepository, WebhookConfigurationRepository>();
 
 var app = builder.Build();
