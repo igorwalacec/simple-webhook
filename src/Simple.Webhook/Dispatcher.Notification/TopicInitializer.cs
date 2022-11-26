@@ -1,8 +1,8 @@
 ﻿using Confluent.Kafka;
 using Confluent.Kafka.Admin;
-using Dispatcher.Notification.DTOs;
 using Extensions.Hosting.AsyncInitialization;
 using Microsoft.Extensions.Options;
+using Simple.Webhook.Shared.Infra.Kafka;
 
 namespace Dispatcher.Notification;
 public class TopicInitializer : IAsyncInitializer
