@@ -15,32 +15,72 @@ public class WebhookConfigurationRepository : IWebhookConfigurationRepository
         this.distributedCache = distributedCache ?? throw new ArgumentNullException(nameof(distributedCache));
     }
 
-    public async Task<WebhookConfiguration> AddAsync(WebhookConfiguration configuration)
+    public async Task<WebhookConfiguration?> AddAsync(WebhookConfiguration configuration)
     {
-        var configurationJson = JsonSerializer.Serialize(configuration);
-        await distributedCache.SetStringAsync(configuration.Id.ToString(), configurationJson, CancellationToken.None);
+        var configurationJson = await distributedCache.GetStringAsync(configuration.EventName);
+        if(string.IsNullOrEmpty(configurationJson))
+        {
+            var newEventList = new List<WebhookConfiguration>() { configuration };
+            var eventListJson = JsonSerializer.Serialize(newEventList);
+            await distributedCache.SetStringAsync(configuration.EventName, eventListJson, CancellationToken.None);
 
-        return configuration;
+            return configuration;
+        }
+        else
+        {
+            var listConfigurations = JsonSerializer.Deserialize<List<WebhookConfiguration>>(configurationJson);
+            var oldConfiguration = listConfigurations.FirstOrDefault(x => x.Name == configuration.Name);
+        
+            if (oldConfiguration is not null)
+                return null;
+            listConfigurations.Add(configuration);
+            var eventListJson = JsonSerializer.Serialize(listConfigurations);
+            await distributedCache.SetStringAsync(configuration.EventName, eventListJson, CancellationToken.None);
+            return configuration;
+        }
     }
 
-    public async Task DeleteAsync(Guid id) => 
-        await distributedCache.RemoveAsync(id.ToString());
-
-    public async Task<WebhookConfiguration?> GetWebhookConfigurationAsync(Guid id)
+    public async Task DeleteAsync(string eventName, Guid id)
     {
-        var configurationJson = await distributedCache.GetStringAsync(id.ToString());
-        if (string.IsNullOrEmpty(configurationJson))
+        var configurationJson = await distributedCache.GetStringAsync(eventName);
+        if (!string.IsNullOrEmpty(configurationJson))
+        {
+            var listConfigurations = JsonSerializer.Deserialize<List<WebhookConfiguration>>(configurationJson);
+            var configuration = listConfigurations?.Where(x => x.Id == id).FirstOrDefault();
+            if(configuration is not null)
+            {
+                listConfigurations?.Remove(configuration);
+                var eventListJson = JsonSerializer.Serialize(listConfigurations);
+                await distributedCache.SetStringAsync(configuration.EventName, eventListJson, CancellationToken.None);
+            }
+        }
+    }
+
+    public async Task<WebhookConfiguration?> GetWebhookConfigurationAsync(string eventName, Guid id)
+    {
+        var configurationsJson = await distributedCache.GetStringAsync(eventName);
+        if (string.IsNullOrEmpty(configurationsJson))
             return null;
-        return JsonSerializer.Deserialize<WebhookConfiguration>(configurationJson);
+        return JsonSerializer.Deserialize<List<WebhookConfiguration>>(configurationsJson)
+            ?.FirstOrDefault(x => x.Id == id);
     }
 
     public async Task<WebhookConfiguration?> UpdateAsync(WebhookConfiguration configuration)
     {
-        var oldConfigurationJson = await distributedCache.GetStringAsync(configuration.Id.ToString());
-        if (string.IsNullOrEmpty(oldConfigurationJson))
+        var configurationsJson = await distributedCache.GetStringAsync(configuration.EventName);
+        if (string.IsNullOrEmpty(configurationsJson))
+        {
             return null;
-        var newConfigurationJson = JsonSerializer.Serialize(configuration);
-        await distributedCache.SetStringAsync(configuration.Id.ToString(), newConfigurationJson, CancellationToken.None);
+        }
+        var listConfigurations = JsonSerializer.Deserialize<List<WebhookConfiguration>>(configurationsJson);
+        var oldConfiguration = listConfigurations?.FirstOrDefault(x => x.Id == configuration.Id);
+        if (oldConfiguration is not null)
+        {
+            listConfigurations.Remove(oldConfiguration);
+            listConfigurations.Add(configuration);
+        }
+        var newConfigurationsJson = JsonSerializer.Serialize(listConfigurations);
+        await distributedCache.SetStringAsync(configuration.EventName, newConfigurationsJson, CancellationToken.None);
 
         return configuration;
     }

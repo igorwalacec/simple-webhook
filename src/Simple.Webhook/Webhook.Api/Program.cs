@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using Simple.Webhook.Shared;
 using Simple.Webhook.Shared.Infra.Redis;
 using Webhook.Api.DTOs;
@@ -23,17 +24,17 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.MapPost("/webhook", async(WebhookConfigurationDTO configuration, IWebhookConfigurationRepository repository) =>
+app.MapPost("/webhook", async([FromBody]WebhookConfigurationDTO configuration, [FromServices] IWebhookConfigurationRepository repository) =>
 {
     var newConfiguration = new WebhookConfiguration(configuration.Uri, configuration.Name, configuration.EventName);
     var result = await repository.AddAsync(newConfiguration);
 
-    return Results.Created($"/webhook/{result.Id}", result);
+    return result is null ? Results.BadRequest() : Results.Created($"/webhook/{result.EventName}", result);
 })
 .WithName("Create Webhook")
 .WithOpenApi();
 
-app.MapPut("/webhook/{id}", async (Guid id, WebhookConfigurationDTO configuration, IWebhookConfigurationRepository repository) =>
+app.MapPut("/webhook/{eventName}/{id}", async ([FromRoute] string eventName, [FromRoute] Guid id, [FromBody]WebhookConfigurationDTO configuration, [FromServices]IWebhookConfigurationRepository repository) =>
 {
     var oldConfiguration = new WebhookConfiguration(id, configuration.Uri, configuration.Name, configuration.EventName);
     var newConfiguration = await repository.UpdateAsync(oldConfiguration);
@@ -45,17 +46,17 @@ app.MapPut("/webhook/{id}", async (Guid id, WebhookConfigurationDTO configuratio
 .WithName("Update Webhook")
 .WithOpenApi();
 
-app.MapGet("/webhook/{id}", async (Guid id, IWebhookConfigurationRepository repository) =>
+app.MapGet("/webhook/{eventName}/{id}", async ([FromRoute] string eventName, [FromRoute] Guid id, [FromServices] IWebhookConfigurationRepository repository) =>
 {
-    var configuration = await repository.GetWebhookConfigurationAsync(id);
+    var configuration = await repository.GetWebhookConfigurationAsync(eventName, id);
     return configuration is null ? Results.NotFound() : Results.Ok(configuration);
 })
 .WithName("Get Webhook by Id")
 .WithOpenApi();
 
-app.MapDelete("/webhook/{id}", async (Guid id, IWebhookConfigurationRepository repository) =>
+app.MapDelete("/webhook/{eventName}/{id}", async ([FromRoute] string eventName, [FromRoute] Guid id, [FromServices] IWebhookConfigurationRepository repository) =>
 {
-    await repository.DeleteAsync(id);
+    await repository.DeleteAsync(eventName, id);
     return Results.NoContent();
 })
 .WithName("Delete Webhook by Id")
